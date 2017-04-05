@@ -1,0 +1,624 @@
+---
+title: 'Homework 7: NHANES Dataset Analysis'
+author: "Julianne"
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+  github_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Rcode available here: [https://github.com/JulianneA/N741_Homework7](https://github.com/JulianneA/N741_Homework7)
+
+# Pull subset of variables from NHANES Dataset
+```{r, include=FALSE}
+library(tidyverse)
+library(class)
+library(rpart)
+library(NHANES)
+library(RColorBrewer)
+library(plot3D)
+library(parallel)
+library(randomForestSRC)
+library(ggRandomForests)
+library(mosaic)
+library(partykit)
+library(party)
+
+# Create the NHANES dataset again
+
+NHANES2 <- NHANES %>% dplyr::select(Age, Gender, SleepTrouble, Poverty) 
+#%>% na.omit()
+
+glimpse(NHANES)
+
+# What is the marginal distribution of SleepTrouble?
+
+tally(~ SleepTrouble, data = NHANES2, format = "percent")
+```
+
+```{r, echo=FALSE}
+class(NHANES2)
+
+# Convert back to dataframe
+NHANES2 <- as.data.frame(NHANES2)
+glimpse(NHANES2)
+
+# Convert factors to numeric - the packages just seem to work better that way
+NHANES2$Gender <- as.numeric(NHANES2$Gender)
+NHANES2$SleepTrouble <- as.numeric(NHANES2$SleepTrouble)
+#NHANES2$Depressed <- as.numeric(NHANES2$Depressed)
+
+NHANES2 <- na.omit(NHANES2)
+
+glimpse(NHANES2)
+
+
+```
+
+# Run Models
+
+```{r, echo=FALSE}
+# Apply knn procedure to predict SleepTrouble
+
+# Let's try different values of k to see how that affects performance
+knn.1 <- knn(train = NHANES2, test = NHANES2, cl = as.numeric(NHANES2$SleepTrouble), k = 1)
+knn.3 <- knn(train = NHANES2, test = NHANES2, cl = NHANES2$SleepTrouble, k = 3)
+knn.5 <- knn(train = NHANES2, test = NHANES2, cl = NHANES2$SleepTrouble, k = 5)
+knn.20 <- knn(train = NHANES2, test = NHANES2, cl = NHANES2$SleepTrouble, k = 20)
+
+#knn.1
+
+# Calculate the percent predicted correctly
+
+100*sum(NHANES2$SleepTrouble == knn.1)/length(knn.1)
+100*sum(NHANES2$SleepTrouble == knn.3)/length(knn.3)
+100*sum(NHANES2$SleepTrouble == knn.5)/length(knn.5)
+100*sum(NHANES2$SleepTrouble == knn.20)/length(knn.20)
+
+# Another way to look at success rate against increasing k
+
+table(knn.1, NHANES2$SleepTrouble)
+table(knn.3, NHANES2$SleepTrouble)
+table(knn.5, NHANES2$SleepTrouble)
+table(knn.20, NHANES2$SleepTrouble)
+```
+```{r, echo=FALSE}
+
+# Create the grid
+
+ages <- range(~ Age, data = NHANES2)
+pov <- range(~ Poverty, data = NHANES2)
+res <- 100
+fake_grid <- expand.grid(
+  Age = seq(from = ages[1], to = ages[2], length.out = res),
+  Poverty = seq(from = pov[1], to = pov[2], length.out = res))
+
+#Get the overall proportion, p, of Diabetics
+
+p <- sum(NHANES2$SleepTrouble == 1)/length(NHANES2$SleepTrouble)
+
+# Null model prediction
+
+pred_null <- rep(p, nrow(fake_grid))
+
+# reinitialize the NHANES2 dataset - fix SleepTrouble
+# back to factor of "Yes" and "No"
+
+#NHANES2 <- NHANES[, c("Age", "Gender", "SleepTrouble", 
+#                     "Poverty", "HHIncome", "PhysActive")]
+#NHANES2 <- na.omit(NHANES2)
+#NHANES2 <- as.data.frame(NHANES2)
+```
+```{r, echo=FALSE}
+NHANES2 <- NHANES %>% 
+  dplyr::select(Age, Gender, SleepTrouble, Poverty) %>% 
+  na.omit()
+
+form <- as.formula("SleepTrouble ~ Age + Poverty")
+
+# Evaluate each model on each grid point
+# For the decision tree
+
+dmod_tree <- rpart(form, data = NHANES2, 
+                   control = rpart.control(cp = 0.005, minbucket = 30))
+
+glimpse(fake_grid)
+glimpse(NHANES2)
+pred_tree <- predict(dmod_tree, newdata = fake_grid)[, 1]
+pred_forest <- predict(dmod_tree, newdata = fake_grid, 
+                       type = "prob")[, "Yes"]
+
+# K-nearest neighbor prediction
+
+pred_knn <- NHANES2 %>%
+  select(Age, Poverty) %>%
+  knn(test=select(fake_grid, Age, Poverty), cl = NHANES2$SleepTrouble, k=5) %>%
+  as.numeric() - 1
+
+```
+
+```{r, echo=FALSE}
+##FROM RATTLE
+library(rattle)   # To access the weather dataset and utility commands.
+library(magrittr) # For the %>% and %<>% operators.
+
+# This log generally records the process of building a model. However, with very 
+# little effort the log can be used to score a new dataset. The logical variable 
+# 'building' is used to toggle between generating transformations, as when building 
+# a model, and simply using the transformations, as when scoring a dataset.
+
+building <- TRUE
+scoring  <- ! building
+
+
+# A pre-defined value is used to reset the random seed so that results are repeatable.
+
+crv$seed <- 42 
+
+#============================================================
+# Rattle timestamp: 2017-04-03 13:35:40 x86_64-apple-darwin13.4.0 
+
+# Load an R data frame.
+
+crs$dataset <- NHANES2
+
+# Display a simple summary (structure) of the dataset.
+
+str(crs$dataset)
+
+#============================================================
+# Rattle timestamp: 2017-04-03 13:35:41 x86_64-apple-darwin13.4.0 
+
+# Note the user selections. 
+
+# Build the training/validate/test datasets.
+
+set.seed(crv$seed) 
+crs$nobs <- nrow(crs$dataset) # 7175 observations 
+crs$sample <- crs$train <- sample(nrow(crs$dataset), 0.7*crs$nobs) # 5022 observations
+crs$validate <- sample(setdiff(seq_len(nrow(crs$dataset)), crs$train), 0.15*crs$nobs) # 1076 observations
+crs$test <- setdiff(setdiff(seq_len(nrow(crs$dataset)), crs$train), crs$validate) # 1077 observations
+
+# The following variable selections have been noted.
+
+crs$input <- c("Age", "SleepTrouble", "Poverty")
+
+crs$numeric <- c("Age", "SleepTrouble", "Poverty")
+
+crs$categoric <- NULL
+
+crs$target  <- "Gender"
+crs$risk    <- NULL
+crs$ident   <- NULL
+crs$ignore  <- "nobs"
+crs$weights <- NULL
+
+#============================================================
+# Rattle timestamp: 2017-04-03 13:35:52 x86_64-apple-darwin13.4.0 
+
+# Note the user selections. 
+
+# Build the training/validate/test datasets.
+
+set.seed(crv$seed) 
+crs$nobs <- nrow(crs$dataset) # 7175 observations 
+crs$sample <- crs$train <- sample(nrow(crs$dataset), 0.7*crs$nobs) # 5022 observations
+crs$validate <- sample(setdiff(seq_len(nrow(crs$dataset)), crs$train), 0.15*crs$nobs) # 1076 observations
+crs$test <- setdiff(setdiff(seq_len(nrow(crs$dataset)), crs$train), crs$validate) # 1077 observations
+
+# The following variable selections have been noted.
+
+crs$input <- c("Age", "Gender", "Poverty")
+
+crs$numeric <- c("Age", "Gender", "Poverty")
+
+crs$categoric <- NULL
+
+crs$target  <- "SleepTrouble"
+crs$risk    <- NULL
+crs$ident   <- NULL
+crs$ignore  <- "nobs"
+crs$weights <- NULL
+
+#============================================================
+# Rattle timestamp: 2017-04-03 13:36:02 x86_64-apple-darwin13.4.0 
+
+# Decision Tree 
+
+# The 'rpart' package provides the 'rpart' function.
+
+library(rpart, quietly=TRUE)
+
+# Reset the random number seed to obtain the same results each time.
+
+set.seed(crv$seed)
+
+# Build the Decision Tree model.
+
+crs$rpart <- rpart(SleepTrouble ~ .,
+    data=crs$dataset[crs$train, c(crs$input, crs$target)],
+    method="class",
+    parms=list(split="information"),
+      control=rpart.control(minsplit=5,
+        usesurrogate=0, 
+        maxsurrogate=0))
+
+# Generate a textual view of the Decision Tree model.
+
+print(crs$rpart)
+printcp(crs$rpart)
+cat("\n")
+
+# Time taken: 0.02 secs
+
+#============================================================
+# Rattle timestamp: 2017-04-03 13:36:15 x86_64-apple-darwin13.4.0 
+
+# Conditional inference tree. 
+
+# Build a conditional tree using the party package.
+
+library(party, quietly=TRUE)
+
+# Build a ctree model.
+
+crs$rpart <- ctree(SleepTrouble ~ ., data=crs$dataset[crs$sample,c(crs$input, crs$target)], control=ctree_control(minsplit=5))
+
+# Generate summary of the ctree model.
+
+print(crs$rpart)
+
+plot(crs$rpart)
+```
+
+_Note: SleepTroubles =2 indicates "Yes", and SleepTroubles =1 indicates "No"_
+
+Two visualizations were generated to model the Sleep Troubles variable. These two models are:
+
+* Sleep Troubles ~ Age, Gender, Poverty 
+
+    * Used RATTLE to generate a Decision Tree for this information using the PARTY library (ctree was used instead of rpart)
+
+* Sleep Troubles ~ Age, Poverty 
+
+    * Used Dr. Hertzberg’s code as a model to generate a 2x2 visualization of the KNN, Decision Tree, Null, and Random Forest fit plots for this data. 
+    
+This decision tree is the most intuitive model to grasp (at least for me). This model shows that differences in the likelihood an individual will have disturbed sleep can be separated first and foremost by age, with individuals over 40 having the highest likelihood of self-reported sleep troubles. Within this population (>40), women also are more likely to report varying degrees of sleep troubles regardless of SES, whereas male risk for sleep troubles seems to depend upon SES, with certain demographics having risk that is able to be modeled, and other groups having a range of risk. For younger individuals (<40), women do not appear to report as troubled sleep, and for men, again, their sleep troubles seem to have altered likelihood within groups of differing SES.  
+
+```{r, echo=FALSE}
+
+# build the data frame
+res <- fake_grid %>%
+  mutate(
+    "Null" = pred_null, "Decision Tree" = pred_tree,
+    "Random Forest" = pred_forest, "K-nearest neighbor" = pred_knn
+  ) %>%
+  gather(k="model", value = "y_hat", -Age, -Poverty)
+
+```
+```{r, echo=FALSE}
+
+ggplot(data = res, aes(x = Age, y = Poverty)) +
+  geom_tile(aes(fill=y_hat), color = NA) +
+  geom_count(aes(color = SleepTrouble), alpha = 0.4, data = NHANES2) +
+  scale_fill_gradient(low = "white", high = "hot pink") +
+  scale_color_manual(values = c("gray", "gold")) +
+  scale_size(range = c(0,2)) +
+  scale_x_continuous(expand = c(0.02, 0)) +
+  scale_y_continuous(expand = c(0.02, 0)) +
+  facet_wrap(~model)
+
+length(pred_knn)
+length(pred_tree)
+length(pred_forest)
+
+```
+```{r, echo=FALSE}
+
+SleepTrouble_ensemble <- ifelse((pred_knn =="Yes") +
+                           (pred_tree == "Yes") +
+                           (pred_forest == "Yes") >= 2, "Yes", "No")
+
+```
+
+
+
+# Pull Second subset of variables from NHANES Dataset
+```{r, echo=FALSE}
+# Create the NHANES dataset again
+NHANES4 <- NHANES %>% dplyr::select(Age, Gender, BMI, SleepHrsNight) %>% na.omit()
+NHANES4 <- as.data.frame(NHANES4)
+
+NHANESsub <- NHANES %>% dplyr::select(Age, Gender, BMI) 
+#%>% na.omit()
+NHANESsub$EnoughSleep <- case_when(
+  (NHANES$SleepHrsNight >=7 & NHANES$SleepHrsNight <=9) ~ 1,
+  (NHANES$SleepHrsNight <7 ) ~ 2,
+   (NHANES$SleepHrsNight >9 ) ~ 2) 
+
+
+glimpse(NHANESsub)
+
+
+# What is the marginal distribution of SleepHrsNight?
+
+tally(~ EnoughSleep, data = NHANESsub, format = "percent")
+
+class(NHANESsub)
+
+# Convert back to dataframe
+NHANESsub <- as.data.frame(NHANESsub)
+glimpse(NHANESsub)
+
+# Convert factors to numeric - the packages just seem to work better that way
+NHANESsub$Gender <- as.numeric(NHANESsub$Gender)
+#NHANESsub$SleepHrsNight <- as.numeric(NHANESsub$SleepHrsNight)
+#NHANESsub$Depressed <- as.numeric(NHANESsub$Depressed)
+
+NHANESsub <- na.omit(NHANESsub)
+
+glimpse(NHANESsub)
+
+
+```
+
+# Run Models
+
+```{r, echo=FALSE}
+# Apply knn procedure to predict SleepHrsNight
+
+# Let's try different values of k to see how that affects performance
+knn.1 <- knn(train = NHANESsub, test = NHANESsub, cl = as.numeric(NHANESsub$EnoughSleep), k = 1)
+knn.3 <- knn(train = NHANESsub, test = NHANESsub, cl = NHANESsub$EnoughSleep, k = 3)
+knn.5 <- knn(train = NHANESsub, test = NHANESsub, cl = NHANESsub$EnoughSleep, k = 5)
+knn.20 <- knn(train = NHANESsub, test = NHANESsub, cl = NHANESsub$EnoughSleep, k = 20)
+
+#knn.1
+
+# Calculate the percent predicted correctly
+
+100*sum(NHANESsub$EnoughSleep == knn.1)/length(knn.1)
+100*sum(NHANESsub$EnoughSleep == knn.3)/length(knn.3)
+100*sum(NHANESsub$EnoughSleep == knn.5)/length(knn.5)
+100*sum(NHANESsub$EnoughSleep == knn.20)/length(knn.20)
+
+# Another way to look at success rate against increasing k
+
+table(knn.1, NHANESsub$EnoughSleep)
+table(knn.3, NHANESsub$EnoughSleep)
+table(knn.5, NHANESsub$EnoughSleep)
+table(knn.20, NHANESsub$EnoughSleep)
+```
+
+```{r, echo=FALSE}
+
+# Create the grid
+
+ages <- range(~ Age, data = NHANESsub)
+bmis <- range(~ BMI, data = NHANESsub)
+res <- 100
+fake_grid <- expand.grid(
+  Age = seq(from = ages[1], to = ages[2], length.out = res),
+  BMI = seq(from = bmis[1], to = bmis[2], length.out = res))
+
+#Get the overall proportion, p, of 
+
+p <- sum(NHANESsub$EnoughSleep == 1)/length(NHANESsub$SleepHrsNight)
+
+# Null model prediction
+
+pred_null <- rep(p, nrow(fake_grid))
+
+
+
+#NHANESsub <- NHANES[, c("Age", "Gender", "SleepHrsNight", 
+#                     "Poverty", "HHIncome", "PhysActive")]
+#NHANESsub <- na.omit(NHANESsub)
+#NHANESsub <- as.data.frame(NHANESsub)
+
+NHANESsub <- NHANESsub %>% 
+  dplyr::select(Age, Gender, EnoughSleep, BMI) %>% 
+  na.omit()
+
+glimpse(fake_grid)
+glimpse(NHANESsub)
+NHANESsub$EnoughSleep <- as.factor(NHANESsub$Gender)
+NHANESsub$EnoughSleep <- as.factor(NHANESsub$EnoughSleep)
+
+form <- as.formula("EnoughSleep ~ Age + BMI")
+
+dmod_tree <- rpart(form, data = NHANESsub, 
+                   control = rpart.control(cp = 0.005, minbucket = 30))
+
+
+# For the forest 
+pred_tree <- predict(dmod_tree, newdata = fake_grid)[, 1]
+
+pred_forest <- predict(dmod_tree, newdata = fake_grid, 
+                       type = "prob")[, "1"]
+
+# K-nearest neighbor prediction
+
+pred_knn <- NHANESsub %>%
+  select(Age, BMI) %>%
+  knn(test=select(fake_grid, Age, BMI), cl = NHANESsub$EnoughSleep, k=5) %>%
+  as.numeric() - 1
+
+```
+
+```{r, echo=FALSE}
+
+# build the data frame
+res <- fake_grid %>%
+  mutate(
+    "Null" = pred_null, "Decision Tree" = pred_tree,
+    "Random Forest" = pred_forest, "K-nearest neighbor" = pred_knn
+  ) %>%
+  gather(k="model", value = "y_hat", -Age, -BMI)
+
+```
+
+```{r, echo=FALSE}
+
+ggplot(data = res, aes(x = Age, y = BMI)) +
+  geom_tile(aes(fill=y_hat), color = NA) +
+  geom_count(aes(color = EnoughSleep), alpha = 0.4, data = NHANESsub) +
+  scale_fill_gradient(low = "white", high = "hot pink") +
+  scale_color_manual(values = c("gold", "grey")) +
+  scale_size(range = c(0,2)) +
+  scale_x_continuous(expand = c(0.02, 0)) +
+  scale_y_continuous(expand = c(0.02, 0)) +
+  facet_wrap(~model)
+
+length(pred_knn)
+length(pred_tree)
+length(pred_forest)
+
+```
+_Note: EnoughSleep =1 indicates "Yes, btwn 7-9hrs per night", and EnoughSleep =2 indicates "No, less than 7 or more than 9hrs per night"_
+
+```{r, echo=FALSE}
+
+EnoughSleep_ensemble <- ifelse((pred_knn =="Yes") +
+                           (pred_tree == "Yes") +
+                           (pred_forest == "Yes") >= 2, "Yes", "No")
+
+```
+
+```{r, echo=FALSE}
+#RATTLE
+
+library(rattle)   # To access the weather dataset and utility commands.
+library(magrittr) # For the %>% and %<>% operators.
+
+# This log generally records the process of building a model. However, with very 
+# little effort the log can be used to score a new dataset. The logical variable 
+# 'building' is used to toggle between generating transformations, as when building 
+# a model, and simply using the transformations, as when scoring a dataset.
+
+building <- TRUE
+scoring  <- ! building
+
+
+# A pre-defined value is used to reset the random seed so that results are repeatable.
+
+crv$seed <- 42 
+
+#============================================================
+# Rattle timestamp: 2017-04-03 14:00:01 x86_64-apple-darwin13.4.0 
+
+# Load an R data frame.
+
+crs$dataset <- NHANES4
+
+# Display a simple summary (structure) of the dataset.
+
+str(crs$dataset)
+
+#============================================================
+# Rattle timestamp: 2017-04-03 14:00:01 x86_64-apple-darwin13.4.0 
+
+# Note the user selections. 
+
+# Build the training/validate/test datasets.
+
+set.seed(crv$seed) 
+crs$nobs <- nrow(crs$dataset) # 7683 observations 
+crs$sample <- crs$train <- sample(nrow(crs$dataset), 0.7*crs$nobs) # 5378 observations
+crs$validate <- sample(setdiff(seq_len(nrow(crs$dataset)), crs$train), 0.15*crs$nobs) # 1152 observations
+crs$test <- setdiff(setdiff(seq_len(nrow(crs$dataset)), crs$train), crs$validate) # 1153 observations
+
+# The following variable selections have been noted.
+
+crs$input <- c("Age", "BMI", "SleepHrsNight")
+
+crs$numeric <- c("Age", "BMI", "SleepHrsNight")
+
+crs$categoric <- NULL
+
+crs$target  <- "Gender"
+crs$risk    <- NULL
+crs$ident   <- NULL
+crs$ignore  <- NULL
+crs$weights <- NULL
+
+#============================================================
+# Rattle timestamp: 2017-04-03 14:00:07 x86_64-apple-darwin13.4.0 
+
+# Note the user selections. 
+
+# Build the training/validate/test datasets.
+
+set.seed(crv$seed) 
+crs$nobs <- nrow(crs$dataset) # 7683 observations 
+crs$sample <- crs$train <- sample(nrow(crs$dataset), 0.7*crs$nobs) # 5378 observations
+crs$validate <- sample(setdiff(seq_len(nrow(crs$dataset)), crs$train), 0.15*crs$nobs) # 1152 observations
+crs$test <- setdiff(setdiff(seq_len(nrow(crs$dataset)), crs$train), crs$validate) # 1153 observations
+
+# The following variable selections have been noted.
+
+crs$input <- c("Age", "Gender", "BMI")
+
+crs$numeric <- c("Age", "BMI")
+
+crs$categoric <- "Gender"
+
+crs$target  <- "SleepHrsNight"
+crs$risk    <- NULL
+crs$ident   <- NULL
+crs$ignore  <- NULL
+crs$weights <- NULL
+
+#============================================================
+# Rattle timestamp: 2017-04-03 14:00:18 x86_64-apple-darwin13.4.0 
+
+# Conditional inference tree. 
+
+# Build a conditional tree using the party package.
+
+library(party, quietly=TRUE)
+
+# Build a ctree model.
+
+crs$rpart <- ctree(SleepHrsNight ~ ., data=crs$dataset[crs$sample,c(crs$input, crs$target)], control=ctree_control(minsplit=5))
+
+# Generate summary of the ctree model.
+
+print(crs$rpart)
+
+# Time taken: 0.03 secs
+
+#============================================================
+# Rattle timestamp: 2017-04-03 14:00:19 x86_64-apple-darwin13.4.0 
+
+# Plot the resulting Decision Tree. 
+
+# We use the party package.
+
+plot(crs$rpart)
+```
+
+Again, two visualizations were generated to model the variable capturing Hours of sleep per night. These two models are:
+
+* SleepHrsNight ~ Age, BMI, Gender
+
+    * Used RATTLE to generate a Decision Tree for this information using the PARTY library (ctree was used instead of rpart)
+
+* SleepHrsNight ~ Age, Poverty 
+
+    * Used Dr. Hertzberg’s code as a model to generate a 2x2 visualization of the KNN, Decision Tree, Null, and Random Forest fit plots for this data. 
+    * Turned SleepHrsNight into a categorical variable with 1 equaling "Normal Sleep Duration" (7-9 hrs) and 2 equaling "Abnormal Sleep Duration" (<7 or >9hrs/night)
+    
+This decision tree seems to be the most descriptive model. This model shows that differences in the duration of sleep can be split by BMI, with individuals with a higher BMI (37.1) reporting similar sleep patterns compared to those with a BMI below that threshold. Within the sample with a BMI<37.1, gender is the next variable upon with the sleep duration is split, followed by another split by BMI, then further grouped by BMI and Age.
+
+# Classifiers and Sleep Troubles and Duration
+
+Neither one of these sets of classifiers seem to accurately model Sleep Trouble or Sleep Duration. For the first model (SleepTroubles), the model seems to be able to model certain demographics who report consistently untroubled sleep (young women), but does not have the ability to isolate groups that consistently report troubled sleep (as seen in the boxplots indicating that the range of responses for troubled sleep is 1-2 for many of the decision tree groups. 
+
+The Decision tree for Sleep Duration seems to be a bit better at classifying differences in sleep based on demographic measures (BMI, Age, Gender), but this is more likely due to the nature of the dependent variable (continuous instead of categorical) rather than the quality of the classifiers.
